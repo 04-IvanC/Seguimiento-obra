@@ -8,157 +8,126 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os
 
-# --- CONFIGURACIÓN DE PÁGINA Y LOGO ---
-st.set_page_config(page_title="Gestión de Obra y Presupuesto", layout="centered")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="App Obra & Presupuesto", layout="centered")
 
-# Intentar cargar el logo
+# CSS para mejorar la apariencia en móviles
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; background-color: #007bff; color: white; font-weight: bold; }
+    .stTextInput>div>div>input { border-radius: 8px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Logo
 if os.path.exists("logo.png"):
-    st.image("logo.png", width=200)
-else:
-    st.info("Logotipo de la empresa")
+    st.image("logo.png", width=180)
 
-# --- MENÚ LATERAL (NAVEGACIÓN) ---
-st.sidebar.title("Menú Principal")
-opcion = st.sidebar.radio("Seleccione el módulo:", ["Seguimiento de Obra", "Seguimiento de Presupuesto"])
+# --- NAVEGACIÓN ---
+st.sidebar.title("Menú de Control")
+opcion = st.sidebar.radio("Ir a:", ["🚧 Seguimiento de Obra", "💰 Gestión de Presupuesto"])
 
-# --- FUNCIÓN COMPARTIDA PARA ENVÍO DE EMAIL ---
-def enviar_reporte(df_datos, asunto_mail, nombre_archivo):
+# --- FUNCIÓN DE ENVÍO DE EMAIL ---
+def enviar_email(df_datos, asunto, archivo_nombre, foto_archivo=None):
     try:
-        # Extraer credenciales de los Secrets de Streamlit
-        user_mail = st.secrets["email"]["user"]
-        pass_mail = st.secrets["email"]["password"]
-        profe_mail = st.secrets["email"]["destinatario_profe"]
+        user = st.secrets["email"]["user"]
+        pwd = st.secrets["email"]["password"]
+        dest = st.secrets["email"]["destinatario_profe"]
 
-        # Convertir DataFrame a CSV
-        csv_data = df_datos.to_csv(index=False).encode('utf-8')
-
-        # Configurar el mensaje
         msg = MIMEMultipart()
-        msg['From'] = user_mail
-        msg['To'] = f"{user_mail}, {profe_mail}"
-        msg['Subject'] = asunto_mail
-
-        cuerpo = f"Se adjunta el reporte generado automáticamente desde la App móvil.\nFecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        msg['From'] = user
+        msg['To'] = f"{user}, {dest}"
+        msg['Subject'] = asunto
+        
+        cuerpo = f"Nuevo reporte generado desde la App.\nFecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
         msg.attach(MIMEText(cuerpo, 'plain'))
 
-        # Adjuntar el archivo CSV
+        # Adjuntar Excel (CSV)
+        csv_bin = df_datos.to_csv(index=False).encode('utf-8')
         part = MIMEBase('application', 'octet-stream')
-        part.set_payload(csv_data)
+        part.set_payload(csv_bin)
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f"attachment; filename={nombre_archivo}")
+        part.add_header('Content-Disposition', f"attachment; filename={archivo_nombre}")
         msg.attach(part)
 
-        # Conexión al servidor SMTP de Gmail
+        # Adjuntar Foto si se tomó una
+        if foto_archivo is not None:
+            img_data = foto_archivo.getvalue()
+            img_part = MIMEBase('image', 'png')
+            img_part.set_payload(img_data)
+            encoders.encode_base64(img_part)
+            img_part.add_header('Content-Disposition', 'attachment; filename="evidencia.png"')
+            msg.attach(img_part)
+
+        # Enviar
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
-        server.login(user_mail, pass_mail)
+        server.login(user, pwd)
         server.send_message(msg)
         server.quit()
         
-        st.success("✅ ¡Reporte enviado con éxito al email!")
+        st.success("✅ ¡Reporte y foto enviados con éxito!")
         st.balloons()
     except Exception as e:
-        st.error(f"Error al enviar el email: {e}")
-        st.info("Revisa la configuración de 'Secrets' en Streamlit Cloud.")
+        st.error(f"Error al enviar: {e}")
 
 # --- MÓDULO 1: SEGUIMIENTO DE OBRA ---
-if opcion == "Seguimiento de Obra":
-    st.title("🏗️ Seguimiento de Obra")
+if "Obra" in opcion:
+    st.title("🚧 Seguimiento de Obra")
     st.write("---")
     
-    trabajador = st.text_input("Nombre del Trabajador:")
-    fecha_obra = st.date_input("Fecha del informe:", datetime.now())
-    
-    tareas = [
-        "Trazado y marcado de cajas, tubos y cuadros",
-        "Ejecución rozas en paredes y techos",
-        "Montaje de soportes",
-        "Colocación tubos y conductos",
-        "Tendido de cables",
-        "Identificación y etiquetado",
-        "Conexionado de cables en bornes o regletas",
-        "Instalación y conexionado de mecanismos",
-        "Fijación de carril DIN y mecanismos en cuadro eléctrico",
-        "Cableado interno del cuadro eléctrico",
-        "Configuración de equipos domóticos y/o automáticos",
-        "Conexionado de sensores/actuadores de equipos domóticos/automáticos",
-        "Pruebas de continuidad",
-        "Pruebas de aislamiento",
-        "Verificación de tierras",
-        "Programación del automatismo",
-        "Pruebas de funcionamiento"
-    ]
-    tarea_sel = st.selectbox("Seleccione la tarea:", tareas)
-    
-    estados_lista = [
-        "Avance según porcentaje indicado",
-        "OK, finalizado sin errores",
-        "Finalizado, pero con errores pendientes de corregir",
-        "Finalizado y corregidos los errores"
-    ]
-    estado_sel = st.selectbox("Estado actual:", estados_lista)
-    
-    # Lógica dinámica para el slider
-    porcentaje_reportado = "100%"
-    if estado_sel == "Avance según porcentaje indicado":
-        p_val = st.slider("Indique el % de avance:", 0, 100, 25, step=25)
-        porcentaje_reportado = f"{p_val}%"
-    
-    obs_obra = st.text_area("Observaciones de la obra:")
+    col1, col2 = st.columns(2)
+    with col1:
+        trabajador = st.text_input("Trabajador:")
+    with col2:
+        fecha = st.date_input("Fecha:", datetime.now())
 
-    if st.button("🚀 Guardar y Enviar Reporte de Obra"):
+    tarea = st.selectbox("Seleccione la tarea:", [
+        "Trazado y marcado", "Ejecución rozas", "Montaje soportes", 
+        "Tendido cables", "Conexionado cuadros", "Pruebas técnicas"
+    ])
+    
+    estado = st.select_slider("Grado de avance:", options=["0%", "25%", "50%", "75%", "100% (Finalizado)"])
+    
+    # Cámara
+    foto_obra = st.camera_input("📸 Evidencia de la tarea")
+
+    if st.button("🚀 Enviar Reporte de Obra"):
         if not trabajador:
-            st.warning("Por favor, introduce el nombre del trabajador.")
+            st.warning("Por favor, introduce tu nombre.")
         else:
             df_obra = pd.DataFrame([{
-                "Fecha": fecha_obra,
-                "Trabajador": trabajador,
-                "Tarea": tarea_sel,
-                "Estado": estado_sel,
-                "Avance": porcentaje_reportado,
-                "Observaciones": obs_obra
+                "Fecha": fecha, "Trabajador": trabajador, "Tarea": tarea, "Estado": estado
             }])
-            enviar_reporte(df_obra, f"OBRA: {tarea_sel} - {trabajador}", f"Reporte_Obra_{trabajador}.csv")
+            enviar_email(df_obra, f"OBRA: {tarea} - {trabajador}", f"Obra_{trabajador}.csv", foto_obra)
 
-# --- MÓDULO 2: SEGUIMIENTO DE PRESUPUESTO ---
-elif opcion == "Seguimiento de Presupuesto":
+# --- MÓDULO 2: GESTIÓN DE PRESUPUESTO ---
+else:
     st.title("💰 Seguimiento de Presupuesto")
     st.write("---")
     
-    trabajador_p = st.text_input("Trabajador responsable:")
-    fecha_p = st.date_input("Fecha del albarán:", datetime.now())
-    num_albaran = st.text_input("Número de Albarán:")
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        albaran = st.text_input("Nº de Albarán:")
+    with c2:
+        gasto_raw = st.text_input("Gasto (€):", placeholder="0.00")
     
-    partidas = ["Material Eléctrico", "Mano de Obra", "Maquinaria", "Domótica / Equipos", "Transporte", "Varios"]
-    partida_sel = st.selectbox("Partida asociada:", partidas)
+    partida = st.selectbox("Partida:", ["Material Eléctrico", "Mano de Obra", "Transporte", "Otros"])
+    descripcion = st.text_input("Descripción de la compra:")
     
-    # Campo de descripción de compra
-    desc_compra = st.text_input("Descripción de la compra:")
-    
-    # Campo de gasto manual (sin botones +/-)
-    gasto_input = st.text_input("Gastos de esta partida (€):", placeholder="Ej: 150.75")
-    
-    obs_p = st.text_area("Comentarios adicionales:")
+    # Cámara
+    foto_alb = st.camera_input("📸 Foto del Albarán")
 
-    if st.button("📧 Enviar Reporte de Presupuesto"):
+    if st.button("📧 Enviar Reporte de Gasto"):
         try:
-            # Validar que el gasto sea un número
-            gasto_limpio = gasto_input.replace(",", ".")
-            gasto_final = float(gasto_limpio)
-            
-            if not trabajador_p or not num_albaran or not gasto_input:
-                st.warning("Por favor, completa los campos obligatorios (Trabajador, Albarán y Gasto).")
+            gasto_final = float(gasto_raw.replace(",", "."))
+            if not albaran or not gasto_raw:
+                st.warning("Campos obligatorios: Albarán y Gasto.")
             else:
                 df_pres = pd.DataFrame([{
-                    "Fecha": fecha_p,
-                    "Albarán": num_albaran,
-                    "Trabajador": trabajador_p,
-                    "Partida": partida_sel,
-                    "Descripción": desc_compra,
-                    "Gasto": f"{gasto_final}€",
-                    "Comentarios": obs_p
+                    "Albarán": albaran, "Fecha": datetime.now().date(), "Partida": partida, 
+                    "Descripción": descripcion, "Gasto": f"{gasto_final}€"
                 }])
-                enviar_reporte(df_pres, f"PRESUPUESTO: Alb.{num_albaran} - {trabajador_p}", f"Presupuesto_{num_albaran}.csv")
-        
+                enviar_email(df_pres, f"PRESUPUESTO: Alb.{albaran}", f"Presupuesto_{albaran}.csv", foto_alb)
         except ValueError:
-            st.error("⚠️ Por favor, introduce un valor numérico válido en el campo de Gastos.")
+            st.error("⚠️ Introduce un número válido en el campo Gasto.")
